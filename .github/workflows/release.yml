@@ -29,6 +29,9 @@ jobs:
           - target: aarch64-apple-darwin
             os: macos-latest
             archive: tar.gz
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            archive: zip
 
     runs-on: ${{ matrix.os }}
 
@@ -55,19 +58,33 @@ jobs:
             cargo build --release --locked --target ${{ matrix.target }}
           fi
 
-      - name: Package
+      - name: Package (tar.gz)
+        if: matrix.archive == 'tar.gz'
+        shell: bash
         run: |
           cd target/${{ matrix.target }}/release
           tar czf ../../../${{ env.BINARY_NAME }}-${{ matrix.target }}.tar.gz ${{ env.BINARY_NAME }}
           cd ../../..
-          shasum -a 256 ${{ env.BINARY_NAME }}-${{ matrix.target }}.tar.gz > ${{ env.BINARY_NAME }}-${{ matrix.target }}.tar.gz.sha256
+          sha256sum ${{ env.BINARY_NAME }}-${{ matrix.target }}.tar.gz > ${{ env.BINARY_NAME }}-${{ matrix.target }}.tar.gz.sha256
+
+      - name: Package (zip)
+        if: matrix.archive == 'zip'
+        shell: bash
+        run: |
+          # Windows builds emit `anthropic-proxy.exe`; bsdtar (preinstalled on
+          # windows-latest via Git for Windows) detects the format from the
+          # `.zip` extension via the `-a` flag, so no extra tooling needed.
+          cd target/${{ matrix.target }}/release
+          tar -a -cf ../../../${{ env.BINARY_NAME }}-${{ matrix.target }}.zip ${{ env.BINARY_NAME }}.exe
+          cd ../../..
+          sha256sum ${{ env.BINARY_NAME }}-${{ matrix.target }}.zip > ${{ env.BINARY_NAME }}-${{ matrix.target }}.zip.sha256
 
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}
           path: |
-            ${{ env.BINARY_NAME }}-${{ matrix.target }}.tar.gz
-            ${{ env.BINARY_NAME }}-${{ matrix.target }}.tar.gz.sha256
+            ${{ env.BINARY_NAME }}-${{ matrix.target }}.${{ matrix.archive }}
+            ${{ env.BINARY_NAME }}-${{ matrix.target }}.${{ matrix.archive }}.sha256
 
   release:
     needs: build

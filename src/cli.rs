@@ -1,6 +1,19 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
+/// Default PID file location — `/tmp/anthropic-proxy.pid` on Unix,
+/// the OS temp directory on Windows. Resolved at runtime because clap's
+/// `default_value_t` requires `Display`, which `PathBuf` does not implement.
+#[cfg(unix)]
+pub fn default_pid_file() -> PathBuf {
+    PathBuf::from("/tmp/anthropic-proxy.pid")
+}
+
+#[cfg(windows)]
+pub fn default_pid_file() -> PathBuf {
+    std::env::temp_dir().join("anthropic-proxy.pid")
+}
+
 #[derive(Parser, Debug)]
 #[command(
     name = "anthropic-proxy",
@@ -38,27 +51,27 @@ pub struct Cli {
     #[arg(long, value_name = "TEXT", value_delimiter = ';')]
     pub system_prompt_ignore: Vec<String>,
 
-    /// Run as background daemon
+    /// Run as background daemon (Unix only; on Windows this flag exits with an error)
     #[arg(long)]
     pub daemon: bool,
 
-    /// PID file path (used with daemon commands)
-    #[arg(long, value_name = "FILE", default_value = "/tmp/anthropic-proxy.pid")]
-    pub pid_file: PathBuf,
+    /// PID file path (used with daemon commands). Defaults to the OS temp directory if omitted.
+    #[arg(long, value_name = "FILE")]
+    pub pid_file: Option<PathBuf>,
 }
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
     /// Stop running daemon
     Stop {
-        /// PID file path
-        #[arg(long, value_name = "FILE", default_value = "/tmp/anthropic-proxy.pid")]
-        pid_file: PathBuf,
+        /// PID file path. Defaults to the OS temp directory if omitted.
+        #[arg(long, value_name = "FILE")]
+        pid_file: Option<PathBuf>,
     },
     /// Check daemon status
     Status {
-        /// PID file path
-        #[arg(long, value_name = "FILE", default_value = "/tmp/anthropic-proxy.pid")]
-        pid_file: PathBuf,
+        /// PID file path. Defaults to the OS temp directory if omitted.
+        #[arg(long, value_name = "FILE")]
+        pid_file: Option<PathBuf>,
     },
 }

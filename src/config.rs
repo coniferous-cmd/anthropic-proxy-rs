@@ -2,6 +2,24 @@ use anyhow::{bail, Result};
 use reqwest::Url;
 use std::{collections::BTreeMap, env, path::PathBuf};
 
+/// Resolves the user's home directory in a platform-appropriate way.
+///
+/// On Unix we read `HOME`. On Windows we prefer `USERPROFILE` (the canonical
+/// user-home variable), falling back to `HOME` for environments like MSYS / Git
+/// Bash that set `HOME` to a different location.
+#[cfg(unix)]
+fn user_home() -> Option<PathBuf> {
+    env::var("HOME").ok().map(PathBuf::from)
+}
+
+#[cfg(windows)]
+fn user_home() -> Option<PathBuf> {
+    env::var("USERPROFILE")
+        .or_else(|_| env::var("HOME"))
+        .ok()
+        .map(PathBuf::from)
+}
+
 #[derive(Debug, Clone)]
 pub struct Config {
     pub port: u16,
@@ -51,16 +69,19 @@ impl Config {
             return Some(path);
         }
 
-        if let Ok(home) = env::var("HOME") {
-            let home_config = PathBuf::from(home).join(".anthropic-proxy.env");
+        if let Some(home) = user_home() {
+            let home_config = home.join(".anthropic-proxy.env");
             if home_config.exists() && dotenvy::from_path(&home_config).is_ok() {
                 return Some(home_config);
             }
         }
 
-        let etc_config = PathBuf::from("/etc/anthropic-proxy/.env");
-        if etc_config.exists() && dotenvy::from_path(&etc_config).is_ok() {
-            return Some(etc_config);
+        #[cfg(unix)]
+        {
+            let etc_config = PathBuf::from("/etc/anthropic-proxy/.env");
+            if etc_config.exists() && dotenvy::from_path(&etc_config).is_ok() {
+                return Some(etc_config);
+            }
         }
 
         None

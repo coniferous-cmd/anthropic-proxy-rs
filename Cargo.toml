@@ -45,9 +45,6 @@ dotenvy = "0.15"
 # CLI argument parsing
 clap = { version = "4.5", features = ["derive"] }
 
-# Daemonize
-daemonize = "0.5"
-
 # Server utilities
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["trace", "cors"] }
@@ -56,6 +53,10 @@ tower-http = { version = "0.6", features = ["trace", "cors"] }
 async-stream = "0.3"
 bytes = "1.9"
 pin-project = "1.1"
+
+# Platform-specific dependencies (daemonize uses POSIX-only APIs)
+[target.'cfg(unix)'.dependencies]
+daemonize = "0.5"
 
 [package.metadata.binstall]
 pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target }.tar.gz"

@@ -13,6 +13,7 @@ use axum::{
 use clap::Parser;
 use cli::{Cli, Command};
 use config::Config;
+#[cfg(unix)]
 use daemonize::Daemonize;
 use reqwest::Client;
 use std::sync::Arc;
@@ -28,42 +29,54 @@ fn main() -> anyhow::Result<()> {
     if let Some(command) = cli.command {
         match command {
             Command::Stop { pid_file } => {
-                stop_daemon(&pid_file)?;
+                stop_daemon(&pid_file.unwrap_or_else(cli::default_pid_file))?;
                 return Ok(());
             }
             Command::Status { pid_file } => {
-                check_status(&pid_file)?;
+                check_status(&pid_file.unwrap_or_else(cli::default_pid_file))?;
                 return Ok(());
             }
         }
     }
 
     if cli.daemon {
-        use std::fs::OpenOptions;
+        #[cfg(unix)]
+        {
+            use std::fs::OpenOptions;
 
-        let stdout = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open("/tmp/anthropic-proxy.log")?;
+            let pid_file = cli.pid_file.unwrap_or_else(cli::default_pid_file);
 
-        let stderr = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open("/tmp/anthropic-proxy.log")?;
+            let stdout = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open("/tmp/anthropic-proxy.log")?;
 
-        let daemonize = Daemonize::new()
-            .pid_file(&cli.pid_file)
-            .working_directory(std::env::current_dir()?)
-            .stdout(stdout)
-            .stderr(stderr)
-            .umask(0o027);
+            let stderr = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open("/tmp/anthropic-proxy.log")?;
 
-        match daemonize.start() {
-            Ok(_) => {}
-            Err(e) => {
-                eprintln!("✗ Failed to daemonize: {}", e);
-                std::process::exit(1);
+            let daemonize = Daemonize::new()
+                .pid_file(&pid_file)
+                .working_directory(std::env::current_dir()?)
+                .stdout(stdout)
+                .stderr(stderr)
+                .umask(0o027);
+
+            match daemonize.start() {
+                Ok(_) => {}
+                Err(e) => {
+                    eprintln!("✗ Failed to daemonize: {}", e);
+                    std::process::exit(1);
+                }
             }
+        }
+
+        #[cfg(not(unix))]
+        {
+            eprintln!("✗ --daemon is not supported on Windows.");
+            eprintln!("  Run the proxy in the foreground, or use Task Scheduler / NSSM to manage it as a service.");
+            std::process::exit(1);
         }
     } else {
         eprintln!("✓ Starting proxy in foreground mode");
@@ -237,9 +250,31 @@ fn stop_daemon(pid_file: &std::path::Path) -> anyhow::Result<()> {
         }
     }
 
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     {
-        eprintln!("✗ Daemon stop is only supported on Unix systems");
+        use std::process::Command;
+        // /F (force) matches the Unix default `kill` semantics here: the proxy
+        // does not install a shutdown handler, so SIGTERM and SIGKILL behave
+        // identically. The PID file is the source of truth for ownership.
+        let output = Command::new("taskkill")
+            .args(["/F", "/PID", &pid.to_string()])
+            .output()?;
+
+        if output.status.success() {
+            std::fs::remove_file(pid_file)?;
+            eprintln!("✓ Daemon stopped (PID: {})", pid);
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            eprintln!("✗ Failed to stop daemon (PID: {})", pid);
+            eprintln!("  {}", stderr.trim());
+            std::fs::remove_file(pid_file)?;
+            std::process::exit(1);
+        }
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        eprintln!("✗ Daemon stop is only supported on Unix and Windows systems");
         std::process::exit(1);
     }
 
@@ -278,9 +313,42 @@ fn check_status(pid_file: &std::path::Path) -> anyhow::Result<()> {
         }
     }
 
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     {
-        eprintln!("✗ Daemon status check is only supported on Unix systems");
+        use std::process::Command;
+        // `tasklist /FI` returns exit code 0 regardless of whether the filter
+        // matched, so we have to inspect stdout. The "no match" notification is
+        // locale-translated (e.g. "信息: ..." in zh-CN, "INFO: ..." in en-US,
+        // "INFO: ..." in de-DE), but the CSV row format is invariant: a real
+        // match produces a line starting with a quoted image name containing a
+        // comma. Detect that structural signature instead of matching translated
+        // keywords.
+        let output = Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {}", pid), "/NH", "/FO", "CSV"])
+            .output()?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let running = stdout.lines().any(|line| {
+            let trimmed = line.trim();
+            trimmed.starts_with('"') && trimmed.contains(',')
+        });
+
+        if running {
+            eprintln!("✓ Daemon is running (PID: {})", pid);
+            eprintln!("  PID file: {}", pid_file.display());
+        } else {
+            eprintln!("✗ Daemon is not running");
+            eprintln!(
+                "  Stale PID file found: {} (PID: {})",
+                pid_file.display(),
+                pid
+            );
+            std::process::exit(1);
+        }
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        eprintln!("✗ Daemon status check is only supported on Unix and Windows systems");
         std::process::exit(1);
     }
 

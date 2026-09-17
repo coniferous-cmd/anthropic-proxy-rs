@@ -15,6 +15,8 @@ High-performance Rust proxy that translates Anthropic API requests to OpenAI-com
 
 > **Note**: Using [Task](https://taskfile.dev) is currently recommended. Install with `brew install go-task` (macOS) or see the [installation guide](https://taskfile.dev/installation/). Releases with build binaries will be made soon.
 
+> **Windows**: Install [Rust](https://rustup.rs/) and run `cargo install --path .` from this repository, or download `anthropic-proxy-x86_64-pc-windows-msvc.zip` from [Releases](https://github.com/m0n0x41d/anthropic-proxy-rs/releases), unzip, and run `anthropic-proxy.exe`. The `--daemon` flag is not supported on Windows — use Task Scheduler or NSSM to run the proxy as a background service.
+
 
 ```bash
 # Install Rust (if needed)
