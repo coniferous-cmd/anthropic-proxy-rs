@@ -11,7 +11,9 @@ use axum::{
     Extension, Router,
 };
 use clap::Parser;
-use cli::{Cli, Command};
+use cli::Cli;
+#[allow(unused_imports)]
+use cli::Command;
 use config::Config;
 #[cfg(unix)]
 use daemonize::Daemonize;
@@ -28,10 +30,12 @@ fn main() -> anyhow::Result<()> {
 
     if let Some(command) = cli.command {
         match command {
+            #[cfg(unix)]
             Command::Stop { pid_file } => {
                 stop_daemon(&pid_file.unwrap_or_else(cli::default_pid_file))?;
                 return Ok(());
             }
+            #[cfg(unix)]
             Command::Status { pid_file } => {
                 check_status(&pid_file.unwrap_or_else(cli::default_pid_file))?;
                 return Ok(());
@@ -39,47 +43,43 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
+    #[cfg(unix)]
     if cli.daemon {
-        #[cfg(unix)]
-        {
-            use std::fs::OpenOptions;
+        use std::fs::OpenOptions;
 
-            let pid_file = cli.pid_file.unwrap_or_else(cli::default_pid_file);
+        let pid_file = cli.pid_file.unwrap_or_else(cli::default_pid_file);
 
-            let stdout = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open("/tmp/anthropic-proxy.log")?;
+        let stdout = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("/tmp/anthropic-proxy.log")?;
 
-            let stderr = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open("/tmp/anthropic-proxy.log")?;
+        let stderr = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("/tmp/anthropic-proxy.log")?;
 
-            let daemonize = Daemonize::new()
-                .pid_file(&pid_file)
-                .working_directory(std::env::current_dir()?)
-                .stdout(stdout)
-                .stderr(stderr)
-                .umask(0o027);
+        let daemonize = Daemonize::new()
+            .pid_file(&pid_file)
+            .working_directory(std::env::current_dir()?)
+            .stdout(stdout)
+            .stderr(stderr)
+            .umask(0o027);
 
-            match daemonize.start() {
-                Ok(_) => {}
-                Err(e) => {
-                    eprintln!("✗ Failed to daemonize: {}", e);
-                    std::process::exit(1);
-                }
+        match daemonize.start() {
+            Ok(_) => {}
+            Err(e) => {
+                eprintln!("✗ Failed to daemonize: {}", e);
+                std::process::exit(1);
             }
-        }
-
-        #[cfg(not(unix))]
-        {
-            eprintln!("✗ --daemon is not supported on Windows.");
-            eprintln!("  Run the proxy in the foreground, or use Task Scheduler / NSSM to manage it as a service.");
-            std::process::exit(1);
         }
     } else {
         eprintln!("✓ Starting proxy in foreground mode");
+    }
+
+    #[cfg(not(unix))]
+    {
+        eprintln!("✓ Starting proxy");
     }
 
     let runtime = tokio::runtime::Runtime::new()?;
@@ -221,6 +221,7 @@ async fn health_handler() -> &'static str {
     "OK"
 }
 
+#[cfg(unix)]
 fn stop_daemon(pid_file: &std::path::Path) -> anyhow::Result<()> {
     if !pid_file.exists() {
         eprintln!("✗ PID file not found: {}", pid_file.display());
@@ -281,6 +282,7 @@ fn stop_daemon(pid_file: &std::path::Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
 fn check_status(pid_file: &std::path::Path) -> anyhow::Result<()> {
     if !pid_file.exists() {
         eprintln!("✗ Daemon is not running");

@@ -10,6 +10,7 @@ pub fn default_pid_file() -> PathBuf {
 }
 
 #[cfg(windows)]
+#[allow(dead_code)]
 pub fn default_pid_file() -> PathBuf {
     std::env::temp_dir().join("anthropic-proxy.pid")
 }
@@ -51,24 +52,28 @@ pub struct Cli {
     #[arg(long, value_name = "TEXT", value_delimiter = ';')]
     pub system_prompt_ignore: Vec<String>,
 
-    /// Run as background daemon (Unix only; on Windows this flag exits with an error)
+    /// Run as background daemon (Unix only)
+    #[cfg(unix)]
     #[arg(long)]
     pub daemon: bool,
 
     /// PID file path (used with daemon commands). Defaults to the OS temp directory if omitted.
+    #[cfg(unix)]
     #[arg(long, value_name = "FILE")]
     pub pid_file: Option<PathBuf>,
 }
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
-    /// Stop running daemon
+    /// Stop running daemon (Unix only)
+    #[cfg(unix)]
     Stop {
         /// PID file path. Defaults to the OS temp directory if omitted.
         #[arg(long, value_name = "FILE")]
         pid_file: Option<PathBuf>,
     },
-    /// Check daemon status
+    /// Check daemon status (Unix only)
+    #[cfg(unix)]
     Status {
         /// PID file path. Defaults to the OS temp directory if omitted.
         #[arg(long, value_name = "FILE")]
