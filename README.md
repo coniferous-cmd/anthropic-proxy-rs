@@ -119,10 +119,13 @@ Model mapping:
 
 The proxy searches for `.env` files in the following order:
 
-1. Custom path specified with `--config` flag
-2. Current working directory (`./.env`)
-3. User home directory (`~/.anthropic-proxy.env`)
-4. System-wide config (`/etc/anthropic-proxy/.env`)
+1. `--config <FILE>` — when set, this file is loaded **exclusively**;
+   the rest of the search order is skipped and a missing or unparseable
+   file is a fatal error.
+2. Otherwise, in order:
+   1. Current working directory (`./.env`)
+   2. User config (`~/.config/anthropic-proxy/env`)
+   3. System-wide config (`/etc/anthropic-proxy/.env`, Unix only)
 
 If no `.env` file is found, the proxy uses environment variables from your shell.
 
@@ -192,7 +195,8 @@ anthropic-proxy \
 anthropic-proxy --config /path/to/my-config.env
 
 # Or place it in your home directory
-cp .env ~/.anthropic-proxy.env
+mkdir -p ~/.config/anthropic-proxy
+cp .env ~/.config/anthropic-proxy/env
 anthropic-proxy
 ```
 

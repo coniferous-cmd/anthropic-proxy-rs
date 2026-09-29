@@ -54,37 +54,62 @@ impl Default for Config {
 }
 
 impl Config {
-    fn load_dotenv(custom_path: Option<PathBuf>) -> Option<PathBuf> {
+    fn load_dotenv(custom_path: Option<PathBuf>) -> Result<Option<PathBuf>> {
+        Self::load_dotenv_with_home(custom_path, user_home().as_deref())
+    }
+
+    /// Search-order logic, parameterized by an explicit `home` directory so
+    /// tests can drive it without touching `$HOME` / `%USERPROFILE%`.
+    ///
+    /// Order:
+    /// 1. `--config` custom path — loaded **exclusively**; if it's missing
+    ///    or fails to parse, return `Err` and skip the rest of the search.
+    /// 2. `dotenvy::dotenv()` (CWD + parents).
+    /// 3. `<home>/.config/anthropic-proxy/env` (XDG-style, on both Unix
+    ///    and Windows).
+    /// 4. `/etc/anthropic-proxy/.env` (Unix only).
+    fn load_dotenv_with_home(
+        custom_path: Option<PathBuf>,
+        home: Option<&std::path::Path>,
+    ) -> Result<Option<PathBuf>> {
         if let Some(path) = custom_path {
-            if path.exists() && dotenvy::from_path(&path).is_ok() {
-                return Some(path);
+            if !path.exists() {
+                bail!(
+                    "Custom config file not found: {}\n\
+                     --config was specified, so the default locations\n\
+                     (~/.config/anthropic-proxy/env, ./.env, /etc/anthropic-proxy/.env)\n\
+                     are NOT searched. Fix the path or unset --config.",
+                    path.display()
+                );
             }
-            eprintln!(
-                "⚠️  WARNING: Custom config file not found: {}",
-                path.display()
-            );
+            dotenvy::from_path(&path).map_err(|e| {
+                anyhow::anyhow!("Failed to load custom config {}: {}", path.display(), e)
+            })?;
+            return Ok(Some(path));
         }
 
         if let Ok(path) = dotenvy::dotenv() {
-            return Some(path);
+            return Ok(Some(path));
         }
 
-        if let Some(home) = user_home() {
-            let home_config = home.join(".anthropic-proxy.env");
-            if home_config.exists() && dotenvy::from_path(&home_config).is_ok() {
-                return Some(home_config);
+        if let Some(home) = home {
+            let home_config = home.join(".config").join("anthropic-proxy").join("env");
+            if home_config.exists() {
+                dotenvy::from_path(&home_config)?;
+                return Ok(Some(home_config));
             }
         }
 
         #[cfg(unix)]
         {
             let etc_config = PathBuf::from("/etc/anthropic-proxy/.env");
-            if etc_config.exists() && dotenvy::from_path(&etc_config).is_ok() {
-                return Some(etc_config);
+            if etc_config.exists() {
+                dotenvy::from_path(&etc_config)?;
+                return Ok(Some(etc_config));
             }
         }
 
-        None
+        Ok(None)
     }
 
     #[allow(dead_code)]
@@ -93,10 +118,14 @@ impl Config {
     }
 
     pub fn from_env_with_path(custom_path: Option<PathBuf>) -> Result<Self> {
-        if let Some(path) = Self::load_dotenv(custom_path) {
-            eprintln!("📄 Loaded config from: {}", path.display());
-        } else {
-            eprintln!("ℹ️  No .env file found, using environment variables only");
+        match Self::load_dotenv(custom_path) {
+            Ok(Some(path)) => {
+                eprintln!("📄 Loaded config from: {}", path.display());
+            }
+            Ok(None) => {
+                eprintln!("ℹ️  No .env file found, using environment variables only");
+            }
+            Err(e) => return Err(e),
         }
 
         let port = env::var("PORT")
@@ -637,5 +666,110 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(config.bind, "127.0.0.1");
+    }
+
+    // ---- load_dotenv_with_home search-order tests ----
+    //
+    // These tests exercise the config-file search order without touching
+    // `$HOME` / `%USERPROFILE%` or the CWD. They drive the testable helper
+    // `Config::load_dotenv_with_home` directly with an explicit `home`
+    // directory backed by a `tempfile::TempDir`.
+    //
+    // Note: we use `dotenvy::from_path` only to populate a throwaway env
+    // var on the side, then assert on the returned `PathBuf`. We do NOT
+    // mutate the process environment in a way that other parallel tests
+    // could observe (each test cleans up its own var).
+
+    use std::fs;
+
+    fn write_xdg_config(home: &std::path::Path, contents: &str) -> std::path::PathBuf {
+        let dir = home.join(".config").join("anthropic-proxy");
+        fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("env");
+        fs::write(&file, contents).unwrap();
+        file
+    }
+
+    #[test]
+    fn load_dotenv_with_home_finds_xdg_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        let expected = write_xdg_config(tmp.path(), "UPSTREAM_BASE_URL=https://example.com\n");
+
+        let loaded = Config::load_dotenv_with_home(None, Some(tmp.path())).unwrap();
+        assert_eq!(loaded, Some(expected));
+    }
+
+    #[test]
+    fn load_dotenv_with_home_returns_none_when_xdg_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        // No file written under tmp/.config/anthropic-proxy/env
+        let loaded = Config::load_dotenv_with_home(None, Some(tmp.path())).unwrap();
+        assert_eq!(loaded, None);
+    }
+
+    #[test]
+    fn load_dotenv_with_home_returns_none_when_home_is_none() {
+        // With no custom path, no real CWD config, no home, and (on Unix)
+        // a `/etc/...` file that almost certainly doesn't exist in CI,
+        // this should resolve to None.
+        let loaded = Config::load_dotenv_with_home(None, None).unwrap();
+        assert_eq!(loaded, None);
+    }
+
+    #[test]
+    fn load_dotenv_with_home_custom_path_overrides_xdg() {
+        let tmp = tempfile::tempdir().unwrap();
+        let xdg = write_xdg_config(tmp.path(), "PORT=3001\n");
+        let custom = tmp.path().join("my.env");
+        fs::write(&custom, "PORT=4001\n").unwrap();
+
+        let loaded = Config::load_dotenv_with_home(Some(custom.clone()), Some(tmp.path())).unwrap();
+        assert_eq!(loaded, Some(custom));
+        // sanity: the xdg file really did exist on disk
+        assert!(xdg.exists());
+    }
+
+    #[test]
+    fn load_dotenv_with_home_returns_err_when_custom_missing() {
+        // --config points at a file that does not exist: must bail
+        // instead of falling through to XDG / dotenvy / /etc.
+        let tmp = tempfile::tempdir().unwrap();
+        let missing = tmp.path().join("does-not-exist.env");
+        let err =
+            Config::load_dotenv_with_home(Some(missing.clone()), Some(tmp.path())).unwrap_err();
+        assert!(
+            err.to_string().contains("Custom config file not found"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            err.to_string().contains("NOT searched"),
+            "error should mention --config override semantics, got: {err}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_dotenv_with_home_propagates_parse_error() {
+        // --config points at a file with garbage content: dotenvy::from_path
+        // errors out, and the helper must propagate that error rather than
+        // silently falling through.
+        let tmp = tempfile::tempdir().unwrap();
+        let bad = tmp.path().join("bad.env");
+        fs::write(&bad, "this is not a valid env line\n").unwrap();
+        let err = Config::load_dotenv_with_home(Some(bad.clone()), Some(tmp.path())).unwrap_err();
+        assert!(
+            err.to_string().contains("Failed to load custom config"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_dotenv_with_home_does_not_panic_when_etc_missing() {
+        // On a stock CI Linux box, /etc/anthropic-proxy/.env will not
+        // exist. The helper should silently fall through and return None.
+        let tmp = tempfile::tempdir().unwrap();
+        let loaded = Config::load_dotenv_with_home(None, Some(tmp.path())).unwrap();
+        assert_eq!(loaded, None);
     }
 }

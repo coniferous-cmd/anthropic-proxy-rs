@@ -28,7 +28,9 @@ pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Command>,
 
-    /// Path to custom .env configuration file
+    /// Path to custom .env configuration file. When set, this file is
+    /// loaded exclusively — the default locations are skipped, and a
+    /// missing or unparseable file is a fatal error.
     #[arg(short, long, value_name = "FILE")]
     pub config: Option<PathBuf>,
 
