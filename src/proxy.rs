@@ -116,13 +116,34 @@ pub async fn list_models_handler(
 
 fn resolve_api_key(config: &Config, headers: &HeaderMap) -> Option<String> {
     if config.passthrough_api_key {
-        headers
-            .get("x-api-key")
-            .and_then(|v| v.to_str().ok())
-            .filter(|s| !s.is_empty())
-            .map(ToOwned::to_owned)
+        header_str(headers, "x-api-key").or_else(|| bearer_token(headers))
     } else {
         config.api_key.clone()
+    }
+}
+
+fn header_str(headers: &HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get(name)
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+/// Extract the token from an `Authorization: Bearer <token>` header, which
+/// clients send when authenticated via `ANTHROPIC_AUTH_TOKEN`-style tokens
+/// rather than an `x-api-key` header.
+fn bearer_token(headers: &HeaderMap) -> Option<String> {
+    let value = header_str(headers, "authorization")?;
+    let token = value
+        .strip_prefix("Bearer ")
+        .or_else(|| value.strip_prefix("bearer "))?;
+    let token = token.trim();
+    if token.is_empty() {
+        None
+    } else {
+        Some(token.to_owned())
     }
 }
 
@@ -513,25 +534,85 @@ mod tests {
         headers
     }
 
-    #[tokio::test]
-    async fn resolve_api_key_passthrough_extracts_x_api_key() {
-        let config = Config {
+    fn make_authorization_header(value: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            axum::http::HeaderValue::from_str(value).unwrap(),
+        );
+        headers
+    }
+
+    fn passthrough_config() -> Config {
+        Config {
             passthrough_api_key: true,
             api_key: None,
             ..Default::default()
-        };
+        }
+    }
+
+    #[tokio::test]
+    async fn resolve_api_key_passthrough_extracts_x_api_key() {
+        let config = passthrough_config();
         let headers = make_x_api_key_header("sk-my-test-key");
         let key = super::resolve_api_key(&config, &headers);
         assert_eq!(key, Some("sk-my-test-key".to_string()));
     }
 
     #[tokio::test]
-    async fn resolve_api_key_passthrough_ignores_empty_header() {
+    async fn resolve_api_key_passthrough_falls_back_to_bearer() {
+        let config = passthrough_config();
+        // Clients using ANTHROPIC_AUTH_TOKEN send Authorization: Bearer, not x-api-key
+        let headers = make_authorization_header("Bearer sk-my-auth-token");
+        let key = super::resolve_api_key(&config, &headers);
+        assert_eq!(key, Some("sk-my-auth-token".to_string()));
+
+        // Scheme is case-insensitive
+        let headers = make_authorization_header("bearer sk-lowercase-scheme");
+        let key = super::resolve_api_key(&config, &headers);
+        assert_eq!(key, Some("sk-lowercase-scheme".to_string()));
+    }
+
+    #[tokio::test]
+    async fn resolve_api_key_passthrough_prefers_x_api_key_over_bearer() {
+        let config = passthrough_config();
+        let mut headers = make_x_api_key_header("sk-from-x-api-key");
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            axum::http::HeaderValue::from_static("Bearer sk-from-authorization"),
+        );
+        let key = super::resolve_api_key(&config, &headers);
+        assert_eq!(key, Some("sk-from-x-api-key".to_string()));
+    }
+
+    #[tokio::test]
+    async fn resolve_api_key_passthrough_ignores_empty_or_non_bearer_auth() {
+        let config = passthrough_config();
+        // Empty bearer token
+        let headers = make_authorization_header("Bearer ");
+        assert_eq!(super::resolve_api_key(&config, &headers), None);
+        let headers = make_authorization_header("Bearer");
+        assert_eq!(super::resolve_api_key(&config, &headers), None);
+        // Non-Bearer schemes are not treated as API keys
+        let headers = make_authorization_header("Basic dXNlcjpwYXNz");
+        assert_eq!(super::resolve_api_key(&config, &headers), None);
+    }
+
+    #[tokio::test]
+    async fn resolve_api_key_static_key_ignores_bearer() {
         let config = Config {
-            passthrough_api_key: true,
-            api_key: None,
+            passthrough_api_key: false,
+            api_key: Some("sk-upstream".to_string()),
             ..Default::default()
         };
+        let headers = make_authorization_header("Bearer sk-ignored");
+        let key = super::resolve_api_key(&config, &headers);
+        assert_eq!(key, Some("sk-upstream".to_string()));
+    }
+
+    #[tokio::test]
+    async fn resolve_api_key_passthrough_ignores_empty_header() {
+        let config = passthrough_config();
         // Empty header value returns None
         let key = super::resolve_api_key(&config, &HeaderMap::new());
         assert_eq!(key, None);
@@ -544,11 +625,7 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_api_key_passthrough_returns_none_when_missing() {
-        let config = Config {
-            passthrough_api_key: true,
-            api_key: None,
-            ..Default::default()
-        };
+        let config = passthrough_config();
         let headers = HeaderMap::new();
         let key = super::resolve_api_key(&config, &headers);
         assert_eq!(key, None);

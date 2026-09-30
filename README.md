@@ -131,7 +131,10 @@ If no `.env` file is found, the proxy uses environment variables from your shell
 
 ### API Key Passthrough
 
-When `UPSTREAM_API_KEY_PASSTHROUGH=true` is set, the proxy extracts the API key from each incoming request's `x-api-key` header (the standard header used by Anthropic SDKs and clients) and forwards it as `Authorization: Bearer {key}` to the upstream OpenAI-compatible endpoint.
+When `UPSTREAM_API_KEY_PASSTHROUGH=true` is set, the proxy extracts the API key from each incoming request and forwards it as `Authorization: Bearer {key}` to the upstream OpenAI-compatible endpoint. The key is taken from (in order of preference):
+
+1. The `x-api-key` header (the standard header used by Anthropic SDKs and clients)
+2. The token in an `Authorization: Bearer {key}` header (sent by clients using `ANTHROPIC_AUTH_TOKEN`-style tokens)
 
 This is useful when you want each client to authenticate with its own key to the upstream service, rather than using a single static key configured in `UPSTREAM_API_KEY`.
 
@@ -144,8 +147,8 @@ anthropic-proxy
 
 **Important constraints:**
 - `UPSTREAM_API_KEY_PASSTHROUGH=true` **cannot** be combined with `UPSTREAM_API_KEY`. If both are set, the proxy will refuse to start.
-- If passthrough is enabled but the incoming request has no `x-api-key` header (or an empty one), no `Authorization` header is sent upstream — the upstream endpoint decides whether to accept unauthenticated requests.
-- Passthrough applies to both `/v1/messages` and `/v1/models` endpoints, as both receive the `x-api-key` header from Anthropic clients.
+- If passthrough is enabled but the incoming request carries no key in either `x-api-key` or `Authorization: Bearer` (or an empty one), no `Authorization` header is sent upstream — the upstream endpoint decides whether to accept unauthenticated requests.
+- Passthrough applies to both `/v1/messages` and `/v1/models` endpoints, as both receive the auth headers from Anthropic clients.
 
 ## Usage Examples
 

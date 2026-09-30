@@ -190,7 +190,7 @@ impl Config {
         if passthrough_api_key && api_key.is_some() {
             bail!(
                 "UPSTREAM_API_KEY_PASSTHROUGH=true cannot be used together with UPSTREAM_API_KEY.\n\
-                 When passthrough is enabled, the API key is extracted from each incoming request's x-api-key header.\n\
+                 When passthrough is enabled, the API key is extracted from each incoming request's x-api-key or Authorization: Bearer header.\n\
                  Unset UPSTREAM_API_KEY or set UPSTREAM_API_KEY_PASSTHROUGH=false."
             );
         }
