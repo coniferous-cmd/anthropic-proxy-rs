@@ -26,9 +26,9 @@ use tower_http::{
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 fn main() -> anyhow::Result<()> {
-    let cli = Cli::parse();
+    let mut cli = Cli::parse();
 
-    if let Some(command) = cli.command {
+    if let Some(command) = cli.command.take() {
         match command {
             #[cfg(unix)]
             Command::Stop { pid_file } => {
@@ -47,7 +47,7 @@ fn main() -> anyhow::Result<()> {
     if cli.daemon {
         use std::fs::OpenOptions;
 
-        let pid_file = cli.pid_file.unwrap_or_else(cli::default_pid_file);
+        let pid_file = cli.pid_file.take().unwrap_or_else(cli::default_pid_file);
 
         let stdout = OpenOptions::new()
             .create(true)
