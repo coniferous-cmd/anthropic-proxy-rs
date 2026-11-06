@@ -22,5 +22,29 @@ target
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
+# Local environment files (keep the example tracked)
 .env
+.env.*
+!.env.example
+
+# Task runner local state
 .task/*
+
+# Logs and coverage artifacts
+*.log
+lcov.info
+coverage/
+*.profraw
+*.profdata
+
+# Editor and OS cruft
+.vscode/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# Patch/merge leftovers
+*.orig
+*.rej
