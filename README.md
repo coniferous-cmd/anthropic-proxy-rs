@@ -52,6 +52,38 @@ UPSTREAM_API_KEY=sk-... \
 ./target/release/anthropic-proxy
 ```
 
+### With Docker
+
+The image is built on Alpine (musl, statically linked) with a small
+multi-stage build, and runs as an unprivileged user.
+
+```bash
+docker build -t anthropic-proxy .
+```
+
+```bash
+docker run --rm -p 3000:3000 \
+  -e UPSTREAM_BASE_URL=https://openrouter.ai/api \
+  -e UPSTREAM_API_KEY=sk-or-... \
+  anthropic-proxy
+```
+
+Pass configuration with `-e` (they map 1:1 to the [environment
+variables](#environment-variables)), or mount a `.env` file:
+
+```bash
+docker run --rm -p 3000:3000 --env-file .env anthropic-proxy
+```
+
+Notes:
+
+- The container listens on `0.0.0.0:3000` by default. Override with `-e PORT=8080`
+  and publish the matching host port (`-p 8080:8080`).
+- A `HEALTHCHECK` polls `GET /health` every 30s, using `PORT` when set.
+- `--daemon`, `stop` and `status` are not usable in a container — let Docker
+  manage the process lifetime instead.
+- The image is also published to `ghcr.io/m0n0x41d/anthropic-proxy-rs` on tag pushes.
+
 ## Configuration
 
 ### Command Line Options

@@ -1,7 +1,13 @@
 target/
 .git/
 .github/
+.idea/
+.vscode/
+.claude/
 .haft/
 specs/
 *.md
 LICENSE
+.env
+.env.*
+docker-compose*.yml
